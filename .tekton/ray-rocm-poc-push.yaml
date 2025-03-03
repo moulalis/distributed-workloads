@@ -28,6 +28,8 @@ spec:
     value: Dockerfile
   - name: path-context
     value: images/runtime/ray/rocm
+  - name: build-args
+    value: ["PYTHON_VERSION=39"]
   pipelineSpec:
     description: |
       This pipeline is ideal for building container images from a Containerfile while maintaining trust after pipeline customization.
