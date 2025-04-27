@@ -13,7 +13,7 @@ require (
 	github.com/ray-project/kuberay/ray-operator v1.1.0-alpha.0
 	k8s.io/api v0.29.2
 	k8s.io/apimachinery v0.29.2
-	sigs.k8s.io/kueue v0.6.2
+	sigs.k8s.io/kueue v0.11.4
 )
 
 require (
