@@ -5,7 +5,7 @@ go 1.21
 toolchain go1.21.5
 
 require (
-	github.com/kubeflow/training-operator v1.7.0
+	github.com/kubeflow/training-operator v1.9.2
 	github.com/onsi/gomega v1.31.1
 	github.com/project-codeflare/codeflare-common v0.0.0-20241015133940-3e0d9b3a23ad
 	github.com/prometheus/client_golang v1.20.4
