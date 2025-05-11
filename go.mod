@@ -5,7 +5,7 @@ go 1.22.2
 require (
 	github.com/kubeflow/training-operator v1.7.0
 	github.com/matoous/go-nanoid/v2 v2.1.0
-	github.com/onsi/gomega v1.32.0
+	github.com/onsi/gomega v1.37.0
 	github.com/project-codeflare/appwrapper v0.8.0
 	github.com/project-codeflare/codeflare-common v0.0.0-20250128135036-f501cd31fe8b
 	github.com/prometheus/client_golang v1.20.4
