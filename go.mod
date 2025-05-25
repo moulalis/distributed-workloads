@@ -9,7 +9,7 @@ require (
 	github.com/onsi/gomega v1.31.1
 	github.com/project-codeflare/codeflare-common v0.0.0-20241015133940-3e0d9b3a23ad
 	github.com/prometheus/client_golang v1.20.4
-	github.com/prometheus/common v0.57.0
+	github.com/prometheus/common v0.64.0
 	github.com/ray-project/kuberay/ray-operator v1.1.0-alpha.0
 	k8s.io/api v0.29.2
 	k8s.io/apimachinery v0.29.2
