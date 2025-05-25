@@ -10,7 +10,7 @@ require (
 	github.com/project-codeflare/codeflare-common v0.0.0-20250128135036-f501cd31fe8b
 	github.com/prometheus/client_golang v1.20.4
 	github.com/prometheus/common v0.57.0
-	github.com/ray-project/kuberay/ray-operator v1.1.1
+	github.com/ray-project/kuberay/ray-operator v1.3.2
 	k8s.io/api v0.30.8
 	k8s.io/apimachinery v0.30.8
 	k8s.io/client-go v0.30.8
