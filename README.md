@@ -18,14 +18,15 @@
 
 ### Common environment variables
 
-* `CODEFLARE_TEST_OUTPUT_DIR` - Output directory for test logs
-* `CODEFLARE_TEST_TIMEOUT_SHORT` - Timeout duration for short tasks
-* `CODEFLARE_TEST_TIMEOUT_MEDIUM` - Timeout duration for medium tasks
-* `CODEFLARE_TEST_TIMEOUT_LONG` - Timeout duration for long tasks
-* `CODEFLARE_TEST_RAY_IMAGE` (Optional) - Ray image used for raycluster configuration 
+* `TEST_OUTPUT_DIR` - Output directory for test logs
+* `TEST_TIMEOUT_SHORT` - Timeout duration for short tasks
+* `TEST_TIMEOUT_MEDIUM` - Timeout duration for medium tasks
+* `TEST_TIMEOUT_LONG` - Timeout duration for long tasks
+* `TEST_RAY_IMAGE` (Optional) - Ray image used for raycluster configuration
 * `MINIO_CLI_IMAGE` (Optional) - Minio CLI image used for uploading/downloading data from/into s3 bucket
+* `TEST_TIER` (Optional) - Specifies test tier to run, skipping tests which don't belong to specified test tier. Supported test tiers: Smoke, Tier1, Tier2, Tier3, Pre-Upgrade and Post-Upgrade. Test tier can also be provided using test parameter `testTier`.
 
-    NOTE: `quay.io/modh/ray:2.35.0-py311-cu121` is the default image used for creating a RayCluster resource. If you have your own custom ray image which suits your purposes, specify it in `CODEFLARE_TEST_RAY_IMAGE` environment variable.
+    NOTE: `quay.io/modh/ray:2.47.1-py312-cu128` is the default image used for creating a RayCluster resource. If you have your own custom ray image which suits your purposes, specify it in `TEST_RAY_IMAGE` environment variable.
 
 ### Environment variables for fms-hf-tuning test suite
 
@@ -48,15 +49,63 @@ To upload trained model into S3 compatible storage, use the environment variable
 
 * `ODH_NAMESPACE` - Namespace where ODH components are installed to
 * `NOTEBOOK_USER_NAME` - Username of user used for running Workbench
+* `NOTEBOOK_USER_PASSWORD` - Password of user used for running Workbench
 * `NOTEBOOK_USER_TOKEN` - Login token of user used for running Workbench
 * `NOTEBOOK_IMAGE` - Image used for running Workbench
 
-To download MNIST training script datasets from S3 compatible storage, use the environment variables mentioned below : 
+To download MNIST training script datasets from S3 compatible storage, use the environment variables mentioned below :
 * `AWS_DEFAULT_ENDPOINT` - Storage bucket endpoint from which to download MNIST datasets
 * `AWS_ACCESS_KEY_ID` - Storage bucket access key
 * `AWS_SECRET_ACCESS_KEY` - Storage bucket secret key
 * `AWS_STORAGE_BUCKET` - Storage bucket name
 * `AWS_STORAGE_BUCKET_MNIST_DIR` - Storage bucket directory from which to download MNIST datasets.
+
+### Environment variables for Kubeflow Trainer v2 (TrainingHub SDK) test suite
+
+* `NOTEBOOK_USER_NAME` - Username of user used for running Workbench
+* `NOTEBOOK_USER_PASSWORD` - Password of user used for running Workbench
+* `NOTEBOOK_IMAGE` - Image used for running Workbench
+
+To download models and datasets from S3 compatible storage for TrainingHub SDK tests, use the environment variables mentioned below :
+* `AWS_DEFAULT_ENDPOINT` - Storage bucket endpoint
+* `AWS_ACCESS_KEY_ID` - Storage bucket access key
+* `AWS_SECRET_ACCESS_KEY` - Storage bucket secret key
+* `AWS_STORAGE_BUCKET` - Storage bucket name
+* `AWS_STORAGE_BUCKET_SFT_DIR` (Optional) - S3 prefix for SFT test data (Qwen model + Table-GPT dataset). When not set, notebooks fall back to downloading from HuggingFace.
+* `AWS_STORAGE_BUCKET_OSFT_DIR` (Optional) - S3 prefix for OSFT test data (Qwen model + Table-GPT dataset). When not set, notebooks fall back to downloading from HuggingFace.
+* `AWS_STORAGE_BUCKET_LORA_DIR` (Optional) - S3 prefix for LoRA test data (Qwen model + Unsloth 4-bit variant + sql-create-context dataset). When not set, notebooks fall back to downloading from HuggingFace.
+
+See `tests/trainer/resources/disconnected_env/README.md` for instructions on pre-staging S3 data for disconnected environments.
+
+### Environment variables for Training Hub on Ray (RayJob) test suite
+
+* `TEST_RAY_TRAINING_HUB_IMAGE` (Optional) - Ray image with Training Hub pre-installed, used for RayJob cluster configuration. Defaults to `quay.io/modh/ray:2.55.1-py312-cu129-th081` (pinned by digest).
+
+To download models and datasets from S3 compatible storage for Training Hub RayJob tests, use the environment variables mentioned below:
+* `AWS_DEFAULT_ENDPOINT` - Storage bucket endpoint
+* `AWS_ACCESS_KEY_ID` - Storage bucket access key
+* `AWS_SECRET_ACCESS_KEY` - Storage bucket secret key
+* `AWS_STORAGE_BUCKET` - Storage bucket name
+* `AWS_STORAGE_BUCKET_RAY_TRAINING_HUB_DIR` (Optional) - S3 prefix for Training Hub RayJob test data (Qwen model + GRPO dataset subset). When not set, notebooks fall back to downloading from HuggingFace.
+
+### AI Agents
+
+AI agents configuration lives in the `ai/` directory as the single source of truth. Agent-specific config files are generated from it.
+
+#### Structure
+
+- `ai/skills/<name>/SKILL.md` -- skill body (markdown)
+- `ai/skills/<name>/metadata.json` -- skill metadata (description, globs, etc.)
+- `ai/rules/<name>/RULE.md` -- rule body (markdown)
+- `ai/rules/<name>/metadata.json` -- rule metadata (description, globs for path-scoping)
+
+#### Adding or updating a skill/rule
+
+1. Create or edit files under `ai/skills/<name>/` or `ai/rules/<name>/`.
+2. Run `make sync-agents-config` to regenerate agents directories e.g. `.claude/`.
+3. Commit both the `ai/` source files and the generated output together.
+
+> **Note:** `make sync-agents-config` requires [uv](https://docs.astral.sh/uv/) to be installed. CI runs `make verify-agents-config` to ensure generated files stay in sync.
 
 ### Running Tests
 

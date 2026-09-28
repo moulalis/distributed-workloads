@@ -20,18 +20,17 @@ import (
 	"bytes"
 	"fmt"
 	"testing"
-	"time"
 
 	. "github.com/onsi/gomega"
-	. "github.com/project-codeflare/codeflare-common/support"
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/kueue/apis/kueue/v1beta1"
+	"sigs.k8s.io/kueue/apis/kueue/v1beta2"
 
 	. "github.com/opendatahub-io/distributed-workloads/tests/common"
+	. "github.com/opendatahub-io/distributed-workloads/tests/common/support"
 )
 
 func TestMnistRayCpu(t *testing.T) {
@@ -66,20 +65,23 @@ func mnistRay(t *testing.T, numGpus int, gpuResourceName string, rayImage string
 	test := With(t)
 
 	// Create a namespace
-	namespace := test.NewTestNamespace()
+	namespace := test.NewTestNamespace(WithKueueManaged())
+
+	// Ensure Notebook ServiceAccount exists (no extra RBAC)
+	ensureNotebookServiceAccount(test, namespace.Name)
 
 	// Create Kueue resources
-	resourceFlavor := CreateKueueResourceFlavor(test, v1beta1.ResourceFlavorSpec{})
-	defer test.Client().Kueue().KueueV1beta1().ResourceFlavors().Delete(test.Ctx(), resourceFlavor.Name, metav1.DeleteOptions{})
-	cqSpec := v1beta1.ClusterQueueSpec{
+	resourceFlavor := CreateKueueResourceFlavor(test, v1beta2.ResourceFlavorSpec{})
+	defer test.Client().Kueue().KueueV1beta2().ResourceFlavors().Delete(test.Ctx(), resourceFlavor.Name, metav1.DeleteOptions{})
+	cqSpec := v1beta2.ClusterQueueSpec{
 		NamespaceSelector: &metav1.LabelSelector{},
-		ResourceGroups: []v1beta1.ResourceGroup{
+		ResourceGroups: []v1beta2.ResourceGroup{
 			{
 				CoveredResources: []corev1.ResourceName{corev1.ResourceName("cpu"), corev1.ResourceName("memory"), corev1.ResourceName(gpuResourceName)},
-				Flavors: []v1beta1.FlavorQuotas{
+				Flavors: []v1beta2.FlavorQuotas{
 					{
-						Name: v1beta1.ResourceFlavorReference(resourceFlavor.Name),
-						Resources: []v1beta1.ResourceQuota{
+						Name: v1beta2.ResourceFlavorReference(resourceFlavor.Name),
+						Resources: []v1beta2.ResourceQuota{
 							{
 								Name:         corev1.ResourceCPU,
 								NominalQuota: resource.MustParse("8"),
@@ -99,7 +101,7 @@ func mnistRay(t *testing.T, numGpus int, gpuResourceName string, rayImage string
 		},
 	}
 	clusterQueue := CreateKueueClusterQueue(test, cqSpec)
-	defer test.Client().Kueue().KueueV1beta1().ClusterQueues().Delete(test.Ctx(), clusterQueue.Name, metav1.DeleteOptions{})
+	defer test.Client().Kueue().KueueV1beta2().ClusterQueues().Delete(test.Ctx(), clusterQueue.Name, metav1.DeleteOptions{})
 	CreateKueueLocalQueue(test, namespace.Name, clusterQueue.Name, AsDefaultQueue)
 
 	// Test configuration
@@ -126,14 +128,17 @@ func mnistRay(t *testing.T, numGpus int, gpuResourceName string, rayImage string
 	// Create role binding with Namespace specific admin cluster role
 	CreateUserRoleBindingWithClusterRole(test, userName, namespace.Name, "admin")
 
+	// Create PVC for Notebook
+	notebookPVC := CreatePersistentVolumeClaim(test, namespace.Name, "10Gi", AccessModes(corev1.ReadWriteOnce))
+
 	notebookCommand := getNotebookCommand(rayImage)
 	// Create Notebook CR
-	CreateNotebook(test, namespace, userToken, notebookCommand, config.Name, jupyterNotebookConfigMapFileName, numGpus)
+	CreateNotebook(test, namespace, userToken, notebookCommand, config.Name, jupyterNotebookConfigMapFileName, numGpus, notebookPVC, ContainerSizeSmall, GetRecommendedNotebookImageFromImageStream(test, NotebookImageStreamDataScience))
 
 	// Gracefully cleanup Notebook
 	defer func() {
 		DeleteNotebook(test, namespace)
-		test.Eventually(ListNotebooks(test, namespace), TestTimeoutMedium).Should(HaveLen(0))
+		test.Eventually(Notebooks(test, namespace), TestTimeoutMedium).Should(HaveLen(0))
 	}()
 
 	// Make sure the RayCluster is created and running
@@ -145,61 +150,30 @@ func mnistRay(t *testing.T, numGpus int, gpuResourceName string, rayImage string
 			),
 		)
 
-	// Make sure the Workload is created and running
+	// Make sure the RayCluster Workload is created and admitted
 	test.Eventually(GetKueueWorkloads(test, namespace.Name), TestTimeoutMedium).
 		Should(
-			And(
-				HaveLen(1),
-				ContainElement(WithTransform(KueueWorkloadAdmitted, BeTrueBecause("Workload failed to be admitted"))),
+			ContainElement(
+				And(
+					WithTransform(KueueWorkloadOwnerKind, Equal("RayCluster")),
+					WithTransform(KueueWorkloadAdmitted, BeTrueBecause("Workload failed to be admitted")),
+				),
 			),
 		)
 
-	// Fetch created raycluster
+	// Try to monitor the Ray job via external dashboard (best-effort)
+	// This provides job status logs and API logs when it works
 	rayClusterName := "mnisttest"
-	rayCluster, err := test.Client().Ray().RayV1().RayClusters(namespace.Name).Get(test.Ctx(), rayClusterName, metav1.GetOptions{})
-	test.Expect(err).ToNot(HaveOccurred())
+	jobStatus, monitored := TryMonitorRayJob(test, namespace, rayClusterName)
+	if monitored {
+		test.T().Logf("Successfully monitored Ray job via external dashboard, status: %s", jobStatus)
+		test.Expect(jobStatus).To(Equal("SUCCEEDED"), "RayJob failed!")
+	} else {
+		test.T().Logf("Could not monitor Ray job via external dashboard, falling back to RayCluster deletion check")
+	}
 
-	// Initialise raycluster client to interact with raycluster to get rayjob details using REST-API
-	dashboardUrl := GetDashboardUrl(test, namespace, rayCluster)
-	rayClient := GetRayClusterClient(test, dashboardUrl, test.Config().BearerToken)
-
-	// wait until rayjob exists
-	test.Eventually(func() ([]RayJobDetailsResponse, error) {
-		return rayClient.ListJobs()
-	}, TestTimeoutMedium, 1*time.Second).Should(HaveLen(1), "Ray job not found")
-
-	// Get test job-id
-	jobID := GetTestJobId(test, rayClient)
-	test.Expect(jobID).ToNot(BeEmpty())
-
-	// Wait for the job to be succeeded or failed
-	var rayJobStatus string
-	test.T().Logf("Waiting for job to be Succeeded...\n")
-	test.Eventually(func() (string, error) {
-		resp, err := rayClient.GetJobDetails(jobID)
-		if err != nil {
-			return rayJobStatus, err
-		}
-		rayJobStatusVal := resp.Status
-		if rayJobStatusVal == "SUCCEEDED" || rayJobStatusVal == "FAILED" {
-			test.T().Logf("JobStatus - %s\n", rayJobStatusVal)
-			rayJobStatus = rayJobStatusVal
-			return rayJobStatus, nil
-		}
-		if rayJobStatus != rayJobStatusVal && rayJobStatusVal != "SUCCEEDED" {
-			test.T().Logf("JobStatus - %s...\n", rayJobStatusVal)
-			rayJobStatus = rayJobStatusVal
-		}
-		return rayJobStatus, nil
-	}, TestTimeoutDouble, 1*time.Second).Should(Or(Equal("SUCCEEDED"), Equal("FAILED")), "Job did not complete within the expected time")
-
-	// Store job logs in output directory
-	WriteRayJobAPILogs(test, rayClient, jobID)
-
-	// Assert ray-job status after job execution
-	test.Expect(rayJobStatus).To(Equal("SUCCEEDED"), "RayJob failed !")
-
-	// Make sure the RayCluster finishes and is deleted
-	test.Eventually(RayClusters(test, namespace.Name), TestTimeoutLong).
-		Should(BeEmpty())
+	// Wait for the RayCluster to be deleted (primary success indicator from notebook)
+	test.T().Logf("Waiting for notebook to complete and delete the RayCluster...")
+	test.Eventually(RayClusters(test, namespace.Name), TestTimeoutDouble).
+		Should(BeEmpty(), "RayCluster was not deleted - notebook may have failed")
 }

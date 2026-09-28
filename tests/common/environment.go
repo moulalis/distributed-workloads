@@ -17,29 +17,56 @@ limitations under the License.
 package common
 
 import (
+	"flag"
 	"os"
+	"os/exec"
+	"slices"
+	"strings"
 
-	. "github.com/project-codeflare/codeflare-common/support"
+	. "github.com/opendatahub-io/distributed-workloads/tests/common/support"
 )
 
 const (
-	// The environment variable for namespace where ODH is installed to.
-	odhNamespaceEnvVar = "ODH_NAMESPACE"
+	// The environment variable referring to image simulating sleep condition in container
+	sleepImageEnvVar = "SLEEP_IMAGE"
 	// Name of the authenticated Notebook user
 	notebookUserName = "NOTEBOOK_USER_NAME"
 	// Token of the authenticated Notebook user
 	notebookUserToken = "NOTEBOOK_USER_TOKEN"
+	// Password of the authenticated Notebook user
+	notebookUserPassword = "NOTEBOOK_USER_PASSWORD"
 	// Image of the Notebook
 	notebookImage = "NOTEBOOK_IMAGE"
+	// Test tier to be invoked
+	testTierEnvVar = "TEST_TIER"
+	// The environment variable for HuggingFace token to download models which require authentication
+	huggingfaceTokenEnvVar = "HF_TOKEN"
 )
 
-func GetOpenDataHubNamespace(t Test) string {
-	ns, ok := os.LookupEnv(odhNamespaceEnvVar)
-	if !ok {
-		t.T().Fatalf("Expected environment variable %s not found, please use this environment variable to specify namespace where ODH is installed to.", odhNamespaceEnvVar)
-	}
-	return ns
-}
+const (
+	// Notebook ImageStream names for retrieving recommended images from RHOAI
+	NotebookImageStreamDataScience     = "s2i-generic-data-science-notebook"
+	NotebookImageStreamTrainingHubCPU  = "training-hub-universal-cpu"
+	NotebookImageStreamTrainingHubCUDA = "training-hub-universal-cuda"
+	NotebookImageStreamTrainingHubROCm = "training-hub-universal-rocm"
+)
+
+const (
+	tierSmoke    = "Smoke"
+	tier1        = "Tier1"
+	tier2        = "Tier2"
+	tier3        = "Tier3"
+	preUpgrade   = "Pre-Upgrade"
+	postUpgrade  = "Post-Upgrade"
+	kftoCuda     = "KFTO-CUDA"
+	kftoRocm     = "KFTO-ROCm"
+	examplesCuda = "Examples-CUDA"
+	examplesRocm = "Examples-ROCm"
+)
+
+var testTiers = []string{tierSmoke, tier1, tier2, tier3, preUpgrade, postUpgrade, kftoCuda, kftoRocm, examplesCuda, examplesRocm}
+
+var testTierParam string
 
 func GetNotebookUserName(t Test) string {
 	name, ok := os.LookupEnv(notebookUserName)
@@ -57,10 +84,125 @@ func GetNotebookUserToken(t Test) string {
 	return token
 }
 
-func GetNotebookImage(t Test) string {
-	notebook_image, ok := os.LookupEnv(notebookImage)
+func GetNotebookUserPassword(t Test) string {
+	password, ok := os.LookupEnv(notebookUserPassword)
 	if !ok {
-		t.T().Fatalf("Expected environment variable %s not found, please use this environment variable to specify image of the Notebook.", notebookImage)
+		t.T().Fatalf("Expected environment variable %s not found, please use this environment variable to specify token of the authenticated Notebook password.", notebookUserPassword)
 	}
-	return notebook_image
+	return password
+}
+
+// GenerateNotebookUserToken generates an OpenShift token using oc login with username and password
+func GenerateNotebookUserToken(t Test) string {
+	if token, ok := os.LookupEnv(notebookUserToken); ok {
+		if trimmed := strings.TrimSpace(token); trimmed != "" {
+			return trimmed
+		}
+		t.T().Logf("Environment variable %s is set but empty; falling back to oc login", notebookUserToken)
+	} else {
+		t.T().Logf("Environment variable %s is not set, generating Notebook user token from credentials", notebookUserToken)
+	}
+
+	userName := GetNotebookUserName(t)
+	password := GetNotebookUserPassword(t)
+
+	// Use own kubeconfig file to retrieve user token to keep it separated from main test credentials
+	tempFile, err := os.CreateTemp("", "custom-kubeconfig-")
+	if err != nil {
+		t.T().Fatalf("Failed to create temp kubeconfig file: %v", err)
+	}
+	defer os.Remove(tempFile.Name())
+
+	// Login by oc CLI using username and password
+	cmd := exec.Command("oc", "login", "-u", userName, "-p", password, GetOpenShiftApiUrl(t), "--insecure-skip-tls-verify=true", "--kubeconfig="+tempFile.Name())
+	out, err := cmd.Output()
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			t.T().Logf("Error running 'oc login' command: %v\n", exitError)
+			t.T().Logf("Output: %s\n", out)
+			t.T().Logf("Error output: %s\n", exitError.Stderr)
+		} else {
+			t.T().Logf("Error running 'oc login' command: %v\n", err)
+		}
+		t.T().FailNow()
+	}
+
+	// Use oc CLI to retrieve user token from kubeconfig
+	cmd = exec.Command("oc", "whoami", "--show-token", "--kubeconfig="+tempFile.Name())
+	out, err = cmd.Output()
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			t.T().Logf("Error running 'oc whoami' command: %v\n", exitError)
+			t.T().Logf("Output: %s\n", out)
+			t.T().Logf("Error output: %s\n", exitError.Stderr)
+		} else {
+			t.T().Logf("Error running 'oc whoami' command: %v\n", err)
+		}
+		t.T().FailNow()
+	}
+
+	return strings.TrimSpace(string(out))
+}
+
+// GetRecommendedNotebookImageFromImageStream returns the NOTEBOOK_IMAGE env var if set,
+// otherwise resolves the recommended image from the named ImageStream.
+func GetRecommendedNotebookImageFromImageStream(t Test, imageStreamName string) string {
+	if image, ok := os.LookupEnv(notebookImage); ok {
+		return image
+	}
+
+	odhNamespace, err := GetApplicationsNamespace(t)
+	if err != nil {
+		t.T().Fatalf("Failed to get ODH namespace from DSCI: %v", err)
+	}
+
+	is := GetImageStream(t, odhNamespace, imageStreamName)
+	for _, tag := range is.Spec.Tags {
+		if tag.Annotations["opendatahub.io/workbench-image-recommended"] == "true" {
+			for _, statusTag := range is.Status.Tags {
+				if statusTag.Tag == tag.Name && len(statusTag.Items) > 0 {
+					t.T().Logf("Using notebook image from ImageStream %s:%s: %s", imageStreamName, tag.Name, statusTag.Items[0].DockerImageReference)
+					return statusTag.Items[0].DockerImageReference
+				}
+			}
+		}
+	}
+
+	t.T().Fatalf("ImageStream %s/%s has no recommended tag, set %s environment variable to specify the notebook image", odhNamespace, imageStreamName, notebookImage)
+	return ""
+}
+
+func GetTestTier(t Test) (string, bool) {
+	tt := lookupEnvOrDefault(testTierEnvVar, testTierParam)
+	if tt != "" {
+		if slices.Contains(testTiers, tt) {
+			return tt, true
+		}
+		t.T().Fatalf("Environment variable %s is defined and contains invalid value: '%s'. Valid values are: %v", testTierEnvVar, tt, testTiers)
+	}
+	return "", false
+}
+
+func GetHuggingFaceToken(t Test) string {
+	t.T().Helper()
+	token, ok := os.LookupEnv(huggingfaceTokenEnvVar)
+	if !ok {
+		t.T().Fatalf("Expected environment variable %s not found, please use this environment variable to specify HuggingFace token to download models.", huggingfaceTokenEnvVar)
+	}
+	return token
+}
+
+func GetSleepImage() string {
+	return lookupEnvOrDefault(sleepImageEnvVar, "gcr.io/k8s-staging-perf-tests/sleep@sha256:8d91ddf9f145b66475efda1a1b52269be542292891b5de2a7fad944052bab6ea")
+}
+
+func init() {
+	flag.StringVar(&testTierParam, "testTier", "", "Test tier")
+}
+
+func lookupEnvOrDefault(key, value string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return value
 }

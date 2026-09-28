@@ -1,0 +1,305 @@
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package sdk_tests
+
+import (
+	"fmt"
+	"os"
+	"testing"
+
+	trainerv1alpha1 "github.com/kubeflow/trainer/v2/pkg/apis/trainer/v1alpha1"
+	. "github.com/onsi/gomega"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kueuev1beta2 "sigs.k8s.io/kueue/apis/kueue/v1beta2"
+
+	common "github.com/opendatahub-io/distributed-workloads/tests/common"
+	support "github.com/opendatahub-io/distributed-workloads/tests/common/support"
+	trainerutils "github.com/opendatahub-io/distributed-workloads/tests/trainer/utils"
+)
+
+const (
+	notebookName          = "mnist.ipynb"
+	notebookPath          = "resources/" + notebookName
+	InstallScriptPath     = "resources/disconnected_env/install_kubeflow.py"
+	InstallKubeflowScript = "install_kubeflow.py"
+	installScriptPath     = InstallScriptPath
+	installKubeflowScript = InstallKubeflowScript
+)
+
+// CPU Only - Distributed Training
+func RunFashionMnistCpuDistributedTraining(t *testing.T) {
+	test := support.With(t)
+
+	// Create a new test namespace
+	namespace := test.NewTestNamespace()
+
+	// RBACs setup
+	userName := common.GetNotebookUserName(test)
+	userToken := common.GenerateNotebookUserToken(test)
+	support.CreateUserRoleBindingWithClusterRole(test, userName, namespace.Name, "admin")
+	trainerutils.GrantTrainerUserAccess(test, userName, namespace.Name)
+
+	// Create ConfigMap with notebook and kubeflow install script
+	nb, err := os.ReadFile(notebookPath)
+	test.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("failed to read notebook: %s", notebookPath))
+	installScript, err := os.ReadFile(installScriptPath)
+	test.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("failed to read install script: %s", installScriptPath))
+	cm := support.CreateConfigMap(test, namespace.Name, map[string][]byte{
+		notebookName:          nb,
+		installKubeflowScript: installScript,
+	})
+
+	// Build command with parameters and pinned deps, and print definitive status line to logs
+	endpoint, endpointOK := support.GetStorageBucketDefaultEndpoint()
+	accessKey, _ := support.GetStorageBucketAccessKeyId()
+	secretKey, _ := support.GetStorageBucketSecretKey()
+	bucket, bucketOK := support.GetStorageBucketName()
+	prefix, _ := support.GetStorageBucketMnistDir()
+	if !endpointOK {
+		endpoint = ""
+	}
+	if !bucketOK {
+		bucket = ""
+	}
+	// Create RWX PVC for shared dataset and pass the claim name to the notebook
+	storageClass, err := support.GetRWXStorageClass(test)
+	test.Expect(err).NotTo(HaveOccurred(), "Failed to find an RWX supporting StorageClass")
+	rwxPvc := support.CreatePersistentVolumeClaim(
+		test,
+		namespace.Name,
+		"20Gi",
+		support.AccessModes(corev1.ReadWriteMany),
+		support.StorageClassName(storageClass.Name),
+	)
+
+	env := append([]corev1.EnvVar{
+		{Name: "OPENSHIFT_API_URL", Value: support.GetOpenShiftApiUrl(test)},
+		{Name: "NOTEBOOK_TOKEN", Value: userToken},
+		{Name: "NOTEBOOK_NAMESPACE", Value: namespace.Name},
+		{Name: "SHARED_PVC_NAME", Value: rwxPvc.Name},
+		{Name: "AWS_DEFAULT_ENDPOINT", Value: endpoint},
+		{Name: "AWS_ACCESS_KEY_ID", Value: accessKey},
+		{Name: "AWS_SECRET_ACCESS_KEY", Value: secretKey},
+		{Name: "AWS_STORAGE_BUCKET", Value: bucket},
+		{Name: "AWS_STORAGE_BUCKET_MNIST_DIR", Value: prefix},
+		{Name: "TRAINING_RUNTIME", Value: trainerutils.DefaultClusterTrainingRuntimeCPU},
+		{Name: "GPU_TYPE", Value: "cpu"},
+	}, buildKubeflowInstallEnv()...)
+	shellCmd := fmt.Sprintf(
+		"set -e; "+
+			"python -m pip install --quiet --no-cache-dir papermill && "+
+			"python /opt/app-root/notebooks/%s && "+
+			"if python -m papermill -k python3 /opt/app-root/notebooks/%s /opt/app-root/src/out.ipynb --log-output; "+
+			"then echo 'NOTEBOOK_STATUS: SUCCESS'; else echo 'NOTEBOOK_STATUS: FAILURE'; fi; sleep infinity",
+		installKubeflowScript,
+		notebookName,
+	)
+	command := []string{"/bin/sh", "-c", shellCmd}
+
+	// Create Deployment using the RWX PVC
+	deployment := trainerutils.CreateNotebookDeployment(
+		test,
+		namespace,
+		command,
+		cm.Name,
+		rwxPvc,
+		support.ContainerSizeSmall,
+		common.GetRecommendedNotebookImageFromImageStream(test, common.NotebookImageStreamTrainingHubCPU),
+		env,
+	)
+
+	// Cleanup - use longer timeout due to large runtime images
+	defer func() {
+		support.DeleteDeployment(test, namespace, deployment.Name)
+	}()
+
+	// Wait for the Deployment pod and get pod/container names
+	podName, containerName := support.WaitForDeploymentPodRunning(test, namespace.Name, deployment.Name)
+
+	// Poll runner logs to check if execution completed successfully
+	err = support.PollPodLogsForStatus(test, namespace.Name, podName, containerName, support.TestTimeoutDouble)
+	test.Expect(err).ShouldNot(HaveOccurred(), "Deployment runner execution reported FAILURE")
+
+}
+
+// Kueue Integration - CPU Only - Distributed Training
+func RunFashionMnistKueueCpuDistributedTraining(t *testing.T) {
+	test := support.With(t)
+
+	// Create a Kueue-managed namespace
+	namespace := test.NewTestNamespace(support.WithKueueManaged())
+	test.T().Logf("Created Kueue-managed namespace: %s", namespace.Name)
+
+	// RBACs setup
+	userName := common.GetNotebookUserName(test)
+	userToken := common.GenerateNotebookUserToken(test)
+	support.CreateUserRoleBindingWithClusterRole(test, userName, namespace.Name, "admin")
+	trainerutils.GrantTrainerUserAccess(test, userName, namespace.Name)
+
+	// Create Kueue resources
+	resourceFlavor := support.CreateKueueResourceFlavor(test, kueuev1beta2.ResourceFlavorSpec{})
+	defer test.Client().Kueue().KueueV1beta2().ResourceFlavors().Delete(test.Ctx(), resourceFlavor.Name, metav1.DeleteOptions{})
+
+	cqSpec := kueuev1beta2.ClusterQueueSpec{
+		NamespaceSelector: &metav1.LabelSelector{},
+		ResourceGroups: []kueuev1beta2.ResourceGroup{
+			{
+				CoveredResources: []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory},
+				Flavors: []kueuev1beta2.FlavorQuotas{
+					{
+						Name: kueuev1beta2.ResourceFlavorReference(resourceFlavor.Name),
+						Resources: []kueuev1beta2.ResourceQuota{
+							{
+								Name:         corev1.ResourceCPU,
+								NominalQuota: resource.MustParse("8"),
+							},
+							{
+								Name:         corev1.ResourceMemory,
+								NominalQuota: resource.MustParse("36Gi"),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	clusterQueue := support.CreateKueueClusterQueue(test, cqSpec)
+	defer test.Client().Kueue().KueueV1beta2().ClusterQueues().Delete(test.Ctx(), clusterQueue.Name, metav1.DeleteOptions{})
+
+	// The Deployment and TrainJob use an explicit local queue so both workloads
+	// exercise the same Kueue admission path.
+	customLocalQueue := support.CreateKueueLocalQueue(test, namespace.Name, clusterQueue.Name)
+	test.T().Logf("Created custom LocalQueue %s for TrainJob", customLocalQueue.Name)
+
+	// Create ConfigMap with notebook and kubeflow install script
+	nb, err := os.ReadFile(notebookPath)
+	test.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("failed to read notebook: %s", notebookPath))
+	installScript, err := os.ReadFile(installScriptPath)
+	test.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("failed to read install script: %s", installScriptPath))
+	cm := support.CreateConfigMap(test, namespace.Name, map[string][]byte{
+		notebookName:          nb,
+		installKubeflowScript: installScript,
+	})
+
+	// Build command with parameters and pinned deps, and print definitive status line to logs
+	endpoint, endpointOK := support.GetStorageBucketDefaultEndpoint()
+	accessKey, _ := support.GetStorageBucketAccessKeyId()
+	secretKey, _ := support.GetStorageBucketSecretKey()
+	bucket, bucketOK := support.GetStorageBucketName()
+	prefix, _ := support.GetStorageBucketMnistDir()
+	if !endpointOK {
+		endpoint = ""
+	}
+	if !bucketOK {
+		bucket = ""
+	}
+	// Create RWX PVC for shared dataset and pass the claim name to the notebook
+	storageClass, err := support.GetRWXStorageClass(test)
+	test.Expect(err).NotTo(HaveOccurred(), "Failed to find an RWX supporting StorageClass")
+	rwxPvc := support.CreatePersistentVolumeClaim(
+		test,
+		namespace.Name,
+		"20Gi",
+		support.AccessModes(corev1.ReadWriteMany),
+		support.StorageClassName(storageClass.Name),
+	)
+
+	env := append([]corev1.EnvVar{
+		{Name: "OPENSHIFT_API_URL", Value: support.GetOpenShiftApiUrl(test)},
+		{Name: "NOTEBOOK_TOKEN", Value: userToken},
+		{Name: "NOTEBOOK_NAMESPACE", Value: namespace.Name},
+		{Name: "SHARED_PVC_NAME", Value: rwxPvc.Name},
+		{Name: "AWS_DEFAULT_ENDPOINT", Value: endpoint},
+		{Name: "AWS_ACCESS_KEY_ID", Value: accessKey},
+		{Name: "AWS_SECRET_ACCESS_KEY", Value: secretKey},
+		{Name: "AWS_STORAGE_BUCKET", Value: bucket},
+		{Name: "AWS_STORAGE_BUCKET_MNIST_DIR", Value: prefix},
+		{Name: "TRAINING_RUNTIME", Value: trainerutils.DefaultClusterTrainingRuntimeCPU},
+		{Name: "GPU_TYPE", Value: "cpu"},
+		{Name: "KUEUE_QUEUE_NAME", Value: customLocalQueue.Name},
+	}, buildKubeflowInstallEnv()...)
+	shellCmd := fmt.Sprintf(
+		"set -e; "+
+			"python -m pip install --quiet --no-cache-dir papermill && "+
+			"python /opt/app-root/notebooks/%s && "+
+			"if python -m papermill -k python3 /opt/app-root/notebooks/%s /opt/app-root/src/out.ipynb --log-output; "+
+			"then echo 'NOTEBOOK_STATUS: SUCCESS'; else echo 'NOTEBOOK_STATUS: FAILURE'; fi; sleep infinity",
+		installKubeflowScript,
+		notebookName,
+	)
+	command := []string{"/bin/sh", "-c", shellCmd}
+
+	// Create Deployment using the RWX PVC
+	deployment := trainerutils.CreateNotebookDeployment(
+		test,
+		namespace,
+		command,
+		cm.Name,
+		rwxPvc,
+		support.ContainerSizeSmall,
+		common.GetRecommendedNotebookImageFromImageStream(test, common.NotebookImageStreamTrainingHubCPU),
+		env,
+		support.WithDeploymentLabels(map[string]string{
+			"kueue.x-k8s.io/queue-name": customLocalQueue.Name,
+		}),
+	)
+
+	// Cleanup - use longer timeout due to large runtime images
+	defer func() {
+		support.DeleteDeployment(test, namespace, deployment.Name)
+	}()
+
+	// Verify TrainJob is created with the custom local queue-name label
+	test.T().Logf("Verifying SDK-submitted TrainJob has custom queue label: %s", customLocalQueue.Name)
+	test.Eventually(support.TrainJobs(test, namespace.Name), support.TestTimeoutDouble).Should(
+		And(
+			HaveLen(1),
+			ContainElement(WithTransform(func(job trainerv1alpha1.TrainJob) string {
+				return job.Labels["kueue.x-k8s.io/queue-name"]
+			}, Equal(customLocalQueue.Name))),
+		),
+	)
+	test.T().Logf("SDK-submitted TrainJob has kueue label: kueue.x-k8s.io/queue-name=%s", customLocalQueue.Name)
+
+	// Verify Kueue Workloads: one for the Deployment and one for the TrainJob, both on the custom queue
+	test.T().Log("Verifying Kueue Workloads: Deployment and TrainJob on custom queue...")
+	test.Eventually(support.KueueWorkloads(test, namespace.Name), support.TestTimeoutDouble).Should(
+		And(
+			HaveLen(2),
+			ContainElement(
+				And(
+					WithTransform(func(w *kueuev1beta2.Workload) string {
+						return string(w.Spec.QueueName)
+					}, Equal(customLocalQueue.Name)),
+					WithTransform(support.KueueWorkloadAdmitted, BeTrue()),
+				),
+			),
+		),
+	)
+	test.T().Log("Kueue Workload admitted successfully for SDK-submitted TrainJob")
+
+	// Wait for the Deployment pod and get pod/container names
+	podName, containerName := support.WaitForDeploymentPodRunning(test, namespace.Name, deployment.Name)
+
+	// Poll runner logs to check if execution completed successfully
+	err = support.PollPodLogsForStatus(test, namespace.Name, podName, containerName, support.TestTimeoutDouble)
+	test.Expect(err).ShouldNot(HaveOccurred(), "Deployment runner execution reported FAILURE")
+}

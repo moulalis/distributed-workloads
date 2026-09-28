@@ -1,0 +1,285 @@
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package trainer
+
+import (
+	"testing"
+
+	. "github.com/opendatahub-io/distributed-workloads/tests/common"
+	support "github.com/opendatahub-io/distributed-workloads/tests/common/support"
+	sdktests "github.com/opendatahub-io/distributed-workloads/tests/trainer/sdk_tests"
+)
+
+func TestKubeflowSdk(t *testing.T) {
+	Tags(t, Tier1)
+	sdktests.RunFashionMnistCpuDistributedTraining(t)
+}
+
+func TestKubeflowSdkKueueIntegration(t *testing.T) {
+	Tags(t, Tier1)
+	test := support.With(t)
+	support.SetupKueue(test, initialKueueState, support.TrainJobFramework, support.DeploymentFramework)
+	sdktests.RunFashionMnistKueueCpuDistributedTraining(t)
+}
+
+func TestKubeflowSdkOpenMPICudaKueueIntegration(t *testing.T) {
+	t.Skip("Skip due to issue RHOAIENG-61966")
+	Tags(t, KftoCuda, MultiNodeGpu(2, support.NVIDIA))
+	test := support.With(t)
+	support.SetupKueue(test, initialKueueState, support.TrainJobFramework, support.DeploymentFramework)
+	sdktests.RunOpenMPICudaKueueDistributedTraining(t, support.NVIDIA)
+}
+
+// Single-node, single-GPU tests (1 node, 1 GPU)
+
+// TestSftTrainingHubSingleNodeSingleGPU tests SFT training on a single node with a single GPU
+func TestSftTrainingHubSingleNodeSingleGPU(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunSftTrainingHubMultiGpuDistributedTraining(t, 1)
+}
+
+// TestOsftTrainingHubSingleNodeSingleGPU tests OSFT training on a single node with a single GPU
+func TestOsftTrainingHubSingleNodeSingleGPU(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunOsftTrainingHubMultiGpuDistributedTraining(t, 1)
+}
+
+// TestLoraTrainingHubSingleNodeSingleGPU tests LoRA training on a single node with a single GPU
+func TestLoraTrainingHubSingleNodeSingleGPU(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunLoraTrainingHubMultiGpuDistributedTraining(t, 1)
+}
+
+// TestGrpoTrainingHubSingleNodeSingleGPU tests GRPO (RL) training on a single node with a single GPU
+func TestGrpoTrainingHubSingleNodeSingleGPU(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunGrpoTrainingHubTraining(t, 1)
+}
+
+// TestSftCallbacksTrainingHubSingleNodeSingleGPU tests SFT training with callbacks on a single node with a single GPU
+func TestSftCallbacksTrainingHubSingleNodeSingleGPU(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunSftCallbacksTrainingHub(t, 1)
+}
+
+// TestLoraCallbacksTrainingHubSingleNodeSingleGPU tests LoRA training with callbacks on a single node with a single GPU
+func TestLoraCallbacksTrainingHubSingleNodeSingleGPU(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunLoraCallbacksTrainingHub(t, 1)
+}
+
+// TestOsftCallbacksTrainingHubSingleNodeSingleGPU tests OSFT training with callbacks on a single node with a single GPU
+func TestOsftCallbacksTrainingHubSingleNodeSingleGPU(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunOsftCallbacksTrainingHub(t, 1)
+}
+
+// Multi-node, multi-GPU tests (2 nodes, 1 GPU each)
+
+// TestOsftTrainingHubMultiNodeMultiGPU tests OSFT training using TrainingHubTrainer
+func TestOsftTrainingHubMultiNodeMultiGPU(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeMultiGpu(2, support.NVIDIA, 1)) // TODO: may need to be updated once https://issues.redhat.com/browse/RHOAIENG-30719 and https://issues.redhat.com/browse/RHOAIENG-24552 are resolved
+	sdktests.RunOsftTrainingHubMultiGpuDistributedTraining(t, 2)
+}
+
+// TestLoraTrainingHubMultiNodeMultiGPU tests Lora training using TrainingHubTrainer
+func TestLoraTrainingHubMultiNodeMultiGPU(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeMultiGpu(2, support.NVIDIA, 1)) // TODO: may need to be updated once https://issues.redhat.com/browse/RHOAIENG-30719 and https://issues.redhat.com/browse/RHOAIENG-24552 are resolved
+	sdktests.RunLoraTrainingHubMultiGpuDistributedTraining(t, 2)
+}
+
+// TestSftTrainingHubMultiNodeMultiGPU tests SFT training using TrainingHubTrainer
+func TestSftTrainingHubMultiNodeMultiGPU(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeMultiGpu(2, support.NVIDIA, 1))
+	sdktests.RunSftTrainingHubMultiGpuDistributedTraining(t, 2)
+}
+
+// CPU tests - 1 node, 1 CPU each
+func TestRhaiTrainingProgressionCPU(t *testing.T) {
+	Tags(t, Tier2)
+	sdktests.RunRhaiFeaturesProgressionTest(t, support.CPU, 1)
+}
+
+func TestRhaiJitCheckpointingCPU(t *testing.T) {
+	Tags(t, Tier2)
+	sdktests.RunRhaiFeaturesCheckpointTest(t, support.CPU, 1)
+}
+
+func TestRhaiFeaturesCPU(t *testing.T) {
+	Tags(t, Tier2)
+	sdktests.RunRhaiFeaturesAllTest(t, support.CPU, 1)
+}
+
+// CUDA (NVIDIA) GPU tests - 2 nodes, 1 GPU each
+func TestRhaiTrainingProgressionCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeGpu(2, support.NVIDIA))
+	sdktests.RunRhaiFeaturesProgressionTest(t, support.NVIDIA, 2)
+}
+
+func TestRhaiJitCheckpointingCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeGpu(2, support.NVIDIA))
+	sdktests.RunRhaiFeaturesCheckpointTest(t, support.NVIDIA, 2)
+}
+
+func TestRhaiFeaturesCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeGpu(2, support.NVIDIA))
+	sdktests.RunRhaiFeaturesAllTest(t, support.NVIDIA, 2)
+}
+
+// ROCm (AMD) GPU tests - 2 nodes, 1 GPU each
+func TestRhaiTrainingProgressionRocm(t *testing.T) {
+	Tags(t, KftoRocm, MultiNodeGpu(2, support.AMD))
+	sdktests.RunRhaiFeaturesProgressionTest(t, support.AMD, 2)
+}
+
+func TestRhaiJitCheckpointingRocm(t *testing.T) {
+	Tags(t, KftoRocm, MultiNodeGpu(2, support.AMD))
+	sdktests.RunRhaiFeaturesCheckpointTest(t, support.AMD, 2)
+}
+
+func TestRhaiFeaturesRocm(t *testing.T) {
+	Tags(t, KftoRocm, MultiNodeGpu(2, support.AMD))
+	sdktests.RunRhaiFeaturesAllTest(t, support.AMD, 2)
+}
+
+// Multi-GPU CUDA tests - 2 nodes, 2 GPUs each (requires 4 total NVIDIA GPUs)
+func TestRhaiTrainingProgressionMultiGpuCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeMultiGpu(2, support.NVIDIA, 2))
+	sdktests.RunRhaiFeaturesProgressionMultiGpuTest(t, support.NVIDIA, 2, 2)
+}
+
+func TestRhaiJitCheckpointingMultiGpuCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeMultiGpu(2, support.NVIDIA, 2))
+	sdktests.RunRhaiFeaturesCheckpointMultiGpuTest(t, support.NVIDIA, 2, 2)
+}
+
+func TestRhaiFeaturesMultiGpuCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeMultiGpu(2, support.NVIDIA, 2))
+	sdktests.RunRhaiFeaturesAllMultiGpuTest(t, support.NVIDIA, 2, 2)
+}
+
+// Multi-GPU ROCm tests - 2 nodes, 2 GPUs each (requires 4 total AMD GPUs)
+func TestRhaiTrainingProgressionMultiGpuRocm(t *testing.T) {
+	Tags(t, KftoRocm, MultiNodeMultiGpu(2, support.AMD, 2))
+	sdktests.RunRhaiFeaturesProgressionMultiGpuTest(t, support.AMD, 2, 2)
+}
+
+func TestRhaiJitCheckpointingMultiGpuRocm(t *testing.T) {
+	Tags(t, KftoRocm, MultiNodeMultiGpu(2, support.AMD, 2))
+	sdktests.RunRhaiFeaturesCheckpointMultiGpuTest(t, support.AMD, 2, 2)
+}
+
+func TestRhaiFeaturesMultiGpuRocm(t *testing.T) {
+	Tags(t, KftoRocm, MultiNodeMultiGpu(2, support.AMD, 2))
+	sdktests.RunRhaiFeaturesAllMultiGpuTest(t, support.AMD, 2, 2)
+}
+
+// Training Failure Scenarios — verifies failures are properly propagated
+// Requires CUDA: LORA scenario uses Unsloth which fails at import without CUDA,
+// producing a different error than the expected "No config file found".
+func TestTrainingFailureScenarios(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunTrainingFailureScenariosTest(t)
+}
+
+// Torchrun Training Failure (GPU) — verifies OOM during forward pass is propagated via SDK
+func TestTorchrunTrainingFailure(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunTorchrunTrainingFailureTest(t)
+}
+
+// S3 Checkpoint tests (CPU only, auto-skip if S3 not configured)
+func TestRhaiS3CheckpointingCPU(t *testing.T) {
+	Tags(t, Tier2)
+	sdktests.RunRhaiS3CheckpointTest(t, support.CPU, 1)
+}
+
+// FSDP Full State Checkpoint tests (GPU required, auto-skip if S3 not configured)
+func TestRhaiS3FsdpFullStateCheckpointingCuda(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunRhaiS3FsdpFullStateTest(t, support.NVIDIA, 1)
+}
+
+// FSDP Full State Checkpoint tests (GPU required, 2 nodes, 2 GPUs per node)
+func TestRhaiS3FsdpFullStateCheckpointingMultiProcessCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeMultiGpu(2, support.NVIDIA, 2))
+	t.Skip("Skipping: torchrun's hardcoded 30s shutdown timeout interrupts checkpoint saves (>30s for FSDP), " +
+		"leaving .incomplete markers that cause training to restart from scratch. " +
+		"Fix merged (configurable shutdown timeout) but awaiting PyTorch release. " +
+		"See: https://github.com/pytorch/pytorch/pull/172596")
+	sdktests.RunRhaiS3FsdpFullStateMultiProcessTest(t, support.NVIDIA, 2, 2)
+}
+
+// FSDP Shared State Checkpoint tests (GPU required, 2 nodes, 1 GPU each)
+func TestRhaiS3FsdpSharedStateCheckpointingCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeGpu(2, support.NVIDIA))
+	sdktests.RunRhaiS3FsdpSharedStateGpuTest(t, support.NVIDIA)
+}
+
+// FSDP Shared State Checkpoint tests (2 nodes, 2 GPUs per node)
+func TestRhaiS3FsdpSharedStateCheckpointingMultiGpuCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeMultiGpu(2, support.NVIDIA, 2))
+	sdktests.RunRhaiS3FsdpSharedStateMultiGpuTest(t, support.NVIDIA, 2, 2)
+}
+
+// DeepSpeed Stage 0 Checkpoint tests (ZeRO Stage 0 - no sharding, GPU required)
+func TestRhaiS3DeepspeedStage0CheckpointingCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeGpu(2, support.NVIDIA))
+	sdktests.RunRhaiS3DeepspeedStage0GpuTest(t, support.NVIDIA)
+}
+
+// DeepSpeed Stage 0 Checkpoint tests (2 nodes, 2 GPUs per node)
+func TestRhaiS3DeepspeedStage0CheckpointingMultiGpuCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiNodeMultiGpu(2, support.NVIDIA, 2))
+	sdktests.RunRhaiS3DeepspeedStage0MultiGpuTest(t, support.NVIDIA, 2, 2)
+}
+
+// Speculator pipeline: DATA_ONLY → TRAIN_ONLY, single GPU (1 vLLM + 1 training)
+func TestRhaiSpeculatorPipelineSingleGpuCuda(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunSpeculatorPipelineTest(t, 1, 1)
+}
+
+// Speculator pipeline: DATA_ONLY → TRAIN_ONLY, multi GPU (1 vLLM + 2 training)
+func TestRhaiSpeculatorPipelineMultiGpuCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiGpu(support.NVIDIA, 2))
+	sdktests.RunSpeculatorPipelineTest(t, 1, 2)
+}
+
+// Speculator OFFLINE, single GPU (1 training GPU, external vLLM)
+func TestRhaiSpeculatorOfflineSingleGpuCuda(t *testing.T) {
+	Tags(t, KftoCuda, Gpu(support.NVIDIA))
+	sdktests.RunSpeculatorOfflineTest(t, 1)
+}
+
+// Speculator OFFLINE, multi GPU (2 training GPUs, external vLLM)
+func TestRhaiSpeculatorOfflineMultiGpuCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiGpu(support.NVIDIA, 2))
+	sdktests.RunSpeculatorOfflineTest(t, 2)
+}
+
+// Speculator ONLINE, single GPU (1 training + 1 vLLM sidecar in same pod)
+func TestRhaiSpeculatorOnlineSingleGpuCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiGpu(support.NVIDIA, 2))
+	sdktests.RunSpeculatorOnlineTest(t, 1, 1)
+}
+
+// Speculator ONLINE, multi GPU (2 training + 1 vLLM sidecar in same pod)
+func TestRhaiSpeculatorOnlineMultiGpuCuda(t *testing.T) {
+	Tags(t, KftoCuda, MultiGpu(support.NVIDIA, 3))
+	sdktests.RunSpeculatorOnlineTest(t, 1, 2)
+}

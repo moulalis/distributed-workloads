@@ -1,0 +1,36 @@
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: team2
+spec:
+  cohort: "organization"
+  namespaceSelector: {}
+  preemption:
+    borrowWithinCohort:
+      policy: Never
+    reclaimWithinCohort: Any
+    withinClusterQueue: LowerOrNewerEqualPriority
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources:
+        - cpu
+        - memory
+        - nvidia.com/gpu
+      flavors:
+        - name: nvidia-h100-80gb
+          resources:
+            - name: cpu
+              nominalQuota: '48'
+            - name: memory
+              nominalQuota: 768Gi
+            - name: nvidia.com/gpu
+              nominalQuota: '6'
+        - name: nvidia-a100-80gb
+          resources:
+            - name: cpu
+              nominalQuota: '32'
+            - name: memory
+              nominalQuota: 512Gi
+            - name: nvidia.com/gpu
+              nominalQuota: '4'
+  stopPolicy: None

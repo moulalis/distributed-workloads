@@ -26,12 +26,15 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
-	. "github.com/project-codeflare/codeflare-common/support"
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/kueue/apis/kueue/v1beta2"
 
 	. "github.com/opendatahub-io/distributed-workloads/tests/common"
+	. "github.com/opendatahub-io/distributed-workloads/tests/common/support"
 )
 
 func TestRaytuneOaiMrGrpcCpu(t *testing.T) {
@@ -46,7 +49,44 @@ func raytuneHpo(t *testing.T, numGpus int) {
 	test := With(t)
 
 	// Create a namespace
-	namespace := test.NewTestNamespace()
+	namespace := test.NewTestNamespace(WithKueueManaged())
+
+	// Create Kueue resources
+	resourceFlavor := CreateKueueResourceFlavor(test, v1beta2.ResourceFlavorSpec{})
+	defer test.Client().Kueue().KueueV1beta2().ResourceFlavors().Delete(test.Ctx(), resourceFlavor.Name, metav1.DeleteOptions{})
+	cqSpec := v1beta2.ClusterQueueSpec{
+		NamespaceSelector: &metav1.LabelSelector{},
+		ResourceGroups: []v1beta2.ResourceGroup{
+			{
+				CoveredResources: []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory, corev1.ResourceName("nvidia.com/gpu")},
+				Flavors: []v1beta2.FlavorQuotas{
+					{
+						Name: v1beta2.ResourceFlavorReference(resourceFlavor.Name),
+						Resources: []v1beta2.ResourceQuota{
+							{
+								Name:         corev1.ResourceCPU,
+								NominalQuota: resource.MustParse("8"),
+							},
+							{
+								Name:         corev1.ResourceMemory,
+								NominalQuota: resource.MustParse("12Gi"),
+							},
+							{
+								Name:         corev1.ResourceName("nvidia.com/gpu"),
+								NominalQuota: resource.MustParse(fmt.Sprint(numGpus)),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	clusterQueue := CreateKueueClusterQueue(test, cqSpec)
+	defer test.Client().Kueue().KueueV1beta2().ClusterQueues().Delete(test.Ctx(), clusterQueue.Name, metav1.DeleteOptions{})
+	CreateKueueLocalQueue(test, namespace.Name, clusterQueue.Name, AsDefaultQueue)
+
+	// Ensure Notebook ServiceAccount exists (no extra RBAC)
+	ensureNotebookServiceAccount(test, namespace.Name)
 
 	// Get current working directory
 	workingDirectory, err := os.Getwd()
@@ -69,10 +109,10 @@ func raytuneHpo(t *testing.T, numGpus int) {
 		outputPath := filepath.Join(outputDir, fileName)
 		cmd := exec.Command("curl", "-L", "-o", outputPath, "--create-dirs", url)
 		if err := cmd.Run(); err != nil {
-			test.T().Logf(fmt.Sprintf("Failed to download %s: %v\n", url, err.Error()))
+			test.T().Logf("Failed to download %s: %v\n", url, err.Error())
 			test.Expect(err).ToNot(HaveOccurred())
 		}
-		test.T().Logf("File '%s' downloaded sucessfully", fileName)
+		test.T().Logf("File '%s' downloaded successfully", fileName)
 	}
 	defer os.RemoveAll(outputDir)
 
@@ -81,7 +121,7 @@ func raytuneHpo(t *testing.T, numGpus int) {
 		test.T().Logf("Failed to start the Model Registry service with PostgreSQL: %v\n", err.Error())
 		test.Expect(err).ToNot(HaveOccurred())
 	} else {
-		test.T().Logf(fmt.Sprint("Successfully started the Model Registry service with PostgreSQL"))
+		test.T().Log("Successfully started the Model Registry service with PostgreSQL")
 	}
 
 	// Define the regular(non-admin) user
@@ -118,13 +158,17 @@ func raytuneHpo(t *testing.T, numGpus int) {
 	rayImage := GetRayImage()
 
 	notebookCommand := getNotebookCommand(rayImage)
+
+	// Create PVC for Notebook
+	notebookPVC := CreatePersistentVolumeClaim(test, namespace.Name, "10Gi", AccessModes(corev1.ReadWriteOnce))
+
 	// Create Notebook CR
-	CreateNotebook(test, namespace, userToken, notebookCommand, config.Name, jupyterNotebookConfigMapFileName, numGpus)
+	CreateNotebook(test, namespace, userToken, notebookCommand, config.Name, jupyterNotebookConfigMapFileName, numGpus, notebookPVC, ContainerSizeSmall, GetRecommendedNotebookImageFromImageStream(test, NotebookImageStreamDataScience))
 
 	// Gracefully cleanup Notebook
 	defer func() {
 		DeleteNotebook(test, namespace)
-		test.Eventually(ListNotebooks(test, namespace), TestTimeoutGpuProvisioning).Should(HaveLen(0))
+		test.Eventually(Notebooks(test, namespace), TestTimeoutGpuProvisioning).Should(HaveLen(0))
 	}()
 
 	// Make sure the RayCluster is created and running

@@ -1,0 +1,279 @@
+/*
+Copyright 2023.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package support
+
+import (
+	"os"
+)
+
+const (
+	// The environment variables hereafter can be used to change the components
+	// used for testing.
+
+	TestRayVersion                  = "TEST_RAY_VERSION"
+	TestRayImage                    = "TEST_RAY_IMAGE"
+	TestPyTorchImage                = "TEST_PYTORCH_IMAGE"
+	TestTrainingCudaPyTorch241Image = "TEST_TRAINING_CUDA_PYTORCH_241_IMAGE"
+	TestTrainingCudaPyTorch251Image = "TEST_TRAINING_CUDA_PYTORCH_251_IMAGE"
+	TestTrainingCudaPyTorch28Image  = "TEST_TRAINING_CUDA_PYTORCH_28_IMAGE"
+	TestTrainingRocmPyTorch241Image = "TEST_TRAINING_ROCM_PYTORCH_241_IMAGE"
+	TestTrainingRocmPyTorch251Image = "TEST_TRAINING_ROCM_PYTORCH_251_IMAGE"
+	TestTrainingRocmPyTorch28Image  = "TEST_TRAINING_ROCM_PYTORCH_28_IMAGE"
+
+	TestRayTrainingHubImage = "TEST_RAY_TRAINING_HUB_IMAGE"
+
+	// The testing output directory, to write output files into.
+	TestOutputDir = "TEST_OUTPUT_DIR"
+
+	// Type of cluster test is run on
+	ClusterTypeEnvVar = "CLUSTER_TYPE"
+
+	// Hostname of the Kubernetes cluster
+	ClusterHostname = "CLUSTER_HOSTNAME"
+
+	// URL for downloading MNIST dataset
+	mnistDatasetURL = "MNIST_DATASET_URL"
+
+	// URL for PiPI index containing all the required test Python packages
+	pipIndexURL    = "PIP_INDEX_URL"
+	pipTrustedHost = "PIP_TRUSTED_HOST"
+
+	// Storage bucket credentials
+	storageDefaultEndpoint         = "AWS_DEFAULT_ENDPOINT"
+	storageDefaultRegion           = "AWS_DEFAULT_REGION"
+	storageAccessKeyId             = "AWS_ACCESS_KEY_ID"
+	storageSecretKey               = "AWS_SECRET_ACCESS_KEY"
+	storageBucketName              = "AWS_STORAGE_BUCKET"
+	storageBucketMnistDir          = "AWS_STORAGE_BUCKET_MNIST_DIR"
+	storageBucketFashionMnistDir   = "AWS_STORAGE_BUCKET_FASHION_MNIST_DIR"
+	storageBucketOsftDir           = "AWS_STORAGE_BUCKET_OSFT_DIR"
+	storageBucketSftDir            = "AWS_STORAGE_BUCKET_SFT_DIR"
+	storageBucketLoraDir           = "AWS_STORAGE_BUCKET_LORA_DIR"
+	storageBucketRayTrainingHubDir = "AWS_STORAGE_BUCKET_RAY_TRAINING_HUB_DIR"
+	storageBucketGrpoDir           = "AWS_STORAGE_BUCKET_GRPO_DIR"
+
+	// Name of existing namespace to be used for test
+	testNamespaceNameEnvVar = "TEST_NAMESPACE_NAME"
+
+	// Name of the image that triggered the Konflux ITS pipeline run, used to
+	// filter which ClusterTrainingRuntimes are exercised in e2e tests.
+	TriggerImageName = "TRIGGER_IMAGE_NAME"
+
+	// The environment variable referring to image containing bloom-560m model
+	bloomModelImageEnvVar = "BLOOM_MODEL_IMAGE"
+	// The environment variable referring to image containing Stanford Alpaca dataset
+	alpacaDatasetImageEnvVar = "ALPACA_DATASET_IMAGE"
+)
+
+type ClusterType string
+
+const (
+	OsdCluster        ClusterType = "OSD"
+	OcpCluster        ClusterType = "OCP"
+	HypershiftCluster ClusterType = "HYPERSHIFT"
+	KindCluster       ClusterType = "KIND"
+	UndefinedCluster  ClusterType = "UNDEFINED"
+)
+
+func GetRayVersion() string {
+	return lookupEnvOrDefault(TestRayVersion, RayVersion)
+}
+
+func GetRayImage() string {
+	return lookupEnvOrDefault(TestRayImage, RayImage)
+}
+
+func GetRayROCmImage() string {
+	return lookupEnvOrDefault(TestRayImage, RayROCmImage)
+}
+
+func GetRayTorchCudaImage() string {
+	return lookupEnvOrDefault(TestRayImage, RayTorchCudaImage)
+}
+
+func GetRayTorchROCmImage() string {
+	return lookupEnvOrDefault(TestRayImage, RayTorchROCmImage)
+}
+
+func GetTrainingCudaPyTorch241Image(test Test) string {
+	return lookupTrainingImage(test, TestTrainingCudaPyTorch241Image, RelatedImageTrainingCudaPyTorch241, TrainingCudaPyTorch241Image)
+}
+
+func GetTrainingCudaPyTorch251Image(test Test) string {
+	return lookupTrainingImage(test, TestTrainingCudaPyTorch251Image, RelatedImageTrainingCudaPyTorch251, TrainingCudaPyTorch251Image)
+}
+
+func GetTrainingCudaPyTorch28Image(test Test) string {
+	return lookupTrainingImage(test, TestTrainingCudaPyTorch28Image, RelatedImageTrainingCudaPyTorch28, TrainingCudaPyTorch28Image)
+}
+
+func GetTrainingROCmPyTorch241Image(test Test) string {
+	return lookupTrainingImage(test, TestTrainingRocmPyTorch241Image, RelatedImageTrainingRocmPyTorch241, TrainingRocmPyTorch241Image)
+}
+
+func GetTrainingROCmPyTorch251Image(test Test) string {
+	return lookupTrainingImage(test, TestTrainingRocmPyTorch251Image, RelatedImageTrainingRocmPyTorch251, TrainingRocmPyTorch251Image)
+}
+
+func GetTrainingRocmPyTorch28Image(test Test) string {
+	return lookupTrainingImage(test, TestTrainingRocmPyTorch28Image, RelatedImageTrainingRocmPyTorch28, TrainingRocmPyTorch28Image)
+}
+
+// lookupTrainingImage resolves a training image using three-level priority:
+// 1. Local env var (TEST_TRAINING_*_IMAGE)
+// 2. RHOAI operator pod RELATED_IMAGE env var
+// 3. Hardcoded default
+func lookupTrainingImage(test Test, envVar, relatedImageEnvVar, defaultImage string) string {
+	test.T().Helper()
+	if v, ok := os.LookupEnv(envVar); ok {
+		return v
+	}
+	if v, ok := GetRhoaiOperatorRelatedImage(test, relatedImageEnvVar); ok {
+		test.T().Logf("Using operator RELATED_IMAGE %s: %s", relatedImageEnvVar, v)
+		return v
+	}
+	test.T().Logf("Operator RELATED_IMAGE %s not found, using default: %s", relatedImageEnvVar, defaultImage)
+	return defaultImage
+}
+
+func GetRayTrainingHubImage() string {
+	return lookupEnvOrDefault(TestRayTrainingHubImage, RayTrainingHubCudaImage)
+}
+
+func GetClusterType(t Test) ClusterType {
+	clusterType, ok := os.LookupEnv(ClusterTypeEnvVar)
+	if !ok {
+		t.T().Logf("Environment variable %s is unset.", ClusterTypeEnvVar)
+		return UndefinedCluster
+	}
+	switch clusterType {
+	case "OSD":
+		return OsdCluster
+	case "OCP":
+		return OcpCluster
+	case "HYPERSHIFT":
+		return HypershiftCluster
+	case "KIND":
+		return KindCluster
+	default:
+		t.T().Logf("Environment variable %s is unset or contains an incorrect value: '%s'", ClusterTypeEnvVar, clusterType)
+		return UndefinedCluster
+	}
+}
+
+func GetClusterHostname(t Test) string {
+	hostname, ok := os.LookupEnv(ClusterHostname)
+	if !ok {
+		t.T().Fatalf("Expected environment variable %s not found, please define cluster hostname.", ClusterHostname)
+	}
+	return hostname
+}
+
+func GetMnistDatasetURL() string {
+	return lookupEnvOrDefault(mnistDatasetURL, "https://ossci-datasets.s3.amazonaws.com/mnist/")
+}
+
+func GetStorageBucketDefaultEndpoint() (string, bool) {
+	storage_endpoint, exists := os.LookupEnv(storageDefaultEndpoint)
+	return storage_endpoint, exists
+}
+
+func GetStorageBucketDefaultRegion() (string, bool) {
+	storage_default_region, exists := os.LookupEnv(storageDefaultRegion)
+	return storage_default_region, exists
+}
+
+func GetStorageBucketAccessKeyId() (string, bool) {
+	storage_access_key_id, exists := os.LookupEnv(storageAccessKeyId)
+	return storage_access_key_id, exists
+}
+
+func GetStorageBucketSecretKey() (string, bool) {
+	storage_secret_key, exists := os.LookupEnv(storageSecretKey)
+	return storage_secret_key, exists
+}
+
+func GetStorageBucketName() (string, bool) {
+	storage_bucket_name, exists := os.LookupEnv(storageBucketName)
+	return storage_bucket_name, exists
+}
+
+func GetStorageBucketMnistDir() (string, bool) {
+	storage_bucket_mnist_dir, exists := os.LookupEnv(storageBucketMnistDir)
+	return storage_bucket_mnist_dir, exists
+}
+
+func GetStorageBucketFashionMnistDir() (string, bool) {
+	storage_bucket_fashion_mnist_dir, exists := os.LookupEnv(storageBucketFashionMnistDir)
+	return storage_bucket_fashion_mnist_dir, exists
+}
+
+func GetStorageBucketOsftDir() (string, bool) {
+	storage_bucket_osft_dir, exists := os.LookupEnv(storageBucketOsftDir)
+	return storage_bucket_osft_dir, exists
+}
+
+func GetStorageBucketLoraDir() (string, bool) {
+	storage_bucket_lora_dir, exists := os.LookupEnv(storageBucketLoraDir)
+	return storage_bucket_lora_dir, exists
+}
+
+func GetStorageBucketSftDir() (string, bool) {
+	storage_bucket_sft_dir, exists := os.LookupEnv(storageBucketSftDir)
+	return storage_bucket_sft_dir, exists
+}
+
+func GetStorageBucketRayTrainingHubDir() (string, bool) {
+	dir, exists := os.LookupEnv(storageBucketRayTrainingHubDir)
+	return dir, exists
+}
+
+func GetStorageBucketGrpoDir() (string, bool) {
+	storage_bucket_grpo_dir, exists := os.LookupEnv(storageBucketGrpoDir)
+	return storage_bucket_grpo_dir, exists
+}
+
+func GetPipIndexURL() string {
+	return lookupEnvOrDefault(pipIndexURL, "https://pypi.python.org/simple")
+}
+
+func GetPipTrustedHost() string {
+	return lookupEnvOrDefault(pipTrustedHost, "")
+}
+
+func GetTestNamespaceName() (string, bool) {
+	return os.LookupEnv(testNamespaceNameEnvVar)
+}
+
+func GetTriggerImageName() (string, bool) {
+	return os.LookupEnv(TriggerImageName)
+}
+
+func GetBloomModelImage() string {
+	return lookupEnvOrDefault(bloomModelImageEnvVar, "quay.io/ksuta/bloom-560m@sha256:f6db02bb7b5d09a8d698c04994d747bfb9e581bbb4c07d00290244d207623733")
+}
+
+func GetAlpacaDatasetImage() string {
+	return lookupEnvOrDefault(alpacaDatasetImageEnvVar, "quay.io/ksuta/alpaca-dataset@sha256:2e90f631180c7b2c916f9569b914b336b612e8ae86efad82546adc5c9fcbbb8d")
+}
+
+func lookupEnvOrDefault(key, value string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return value
+}

@@ -1,0 +1,2 @@
+# Install only packages which are not present in base image
+minio==7.2.20

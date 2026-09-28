@@ -1,25 +1,32 @@
 approvers:
+  - abhijeet-dhumal
   - astefanutti
-  - Bobbins228
-  - dimakis
+  - briangallagher
+  - chipspeak
+  - efazal
   - Fiona-Waters
-  - jiripetrlik
-  - kpostoffice
+  - kramaranya
+  - kryanbeane
+  - laurafitzgerald
+  - MStokluska
+  - pawelpaszki
+  - robert-bell
   - sutaakar
   - szaher
-  - varshaprasad96
 reviewers:
   - abhijeet-dhumal
   - astefanutti
-  - Bobbins228
+  - chipspeak
   - ChughShilpa
-  - dimakis
+  - efazal
   - Fiona-Waters
-  - jiripetrlik
-  - kpostoffice
+  - kapil27
+  - kryanbeane
+  - laurafitzgerald
+  - pawelpaszki
+  - robert-bell
   - sutaakar
   - szaher
-  - varshaprasad96
 emeritus_approvers:
   - anishasthana # 2024-09-04
   - jbusche # 2024-09-04

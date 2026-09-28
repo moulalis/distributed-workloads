@@ -1,0 +1,20 @@
+pull_request_rules:
+  - name: Auto-approve lake-gate PRs
+    conditions:
+      - base=stable
+      - label=lake-gate
+      - -closed
+      - author=github-actions[bot]
+    actions:
+      review:
+        type: APPROVE
+  - name: Auto-merge lake-gate PRs to stable
+    conditions:
+      - base=stable
+      - label=lake-gate
+      - -closed
+      - author=github-actions[bot]
+      - "#approved-reviews-by>=1"
+    actions:
+      merge:
+        method: fast-forward

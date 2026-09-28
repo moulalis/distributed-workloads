@@ -21,11 +21,13 @@ import (
 
 	kftov1 "github.com/kubeflow/training-operator/pkg/apis/kubeflow.org/v1"
 	. "github.com/onsi/gomega"
-	. "github.com/project-codeflare/codeflare-common/support"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	. "github.com/opendatahub-io/distributed-workloads/tests/common"
+	. "github.com/opendatahub-io/distributed-workloads/tests/common/support"
 )
 
 var (
@@ -34,10 +36,12 @@ var (
 )
 
 func TestSetupSleepPytorchjob(t *testing.T) {
+	Tags(t, PreUpgrade)
 	test := With(t)
 
-	// Create a namespace
-	createOrGetUpgradeTestNamespace(test, sleepNamespaceName)
+	// Create a namespace with Kueue labeled
+	CreateOrGetTestNamespaceWithName(test, sleepNamespaceName)
+	test.T().Logf("Created namespace: %s", sleepNamespaceName)
 
 	// Create training PyTorch job
 	createSleepPyTorchJob(test, sleepNamespaceName)
@@ -48,6 +52,7 @@ func TestSetupSleepPytorchjob(t *testing.T) {
 }
 
 func TestVerifySleepPytorchjob(t *testing.T) {
+	Tags(t, PostUpgrade)
 	test := With(t)
 	namespace := GetNamespaceWithName(test, sleepNamespaceName)
 
